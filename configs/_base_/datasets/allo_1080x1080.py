@@ -21,12 +21,14 @@ allo_test_pipeline = [
 ]
 train_allo = dict(
     type=allo_type,
+    seed=42,
     data_root=allo_root,
     data_prefix=dict(path="train_v3"),
     pipeline=allo_train_pipeline,
 )
 val_allo = dict(
     type=allo_type,
+    seed=42,
     data_root=allo_root,
     data_prefix=dict(path="test_v3"),
     pipeline=allo_test_pipeline,

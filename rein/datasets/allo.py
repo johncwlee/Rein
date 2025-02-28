@@ -38,7 +38,7 @@ class ALLODataset(BaseSegDataset):
                  reduce_zero_label: bool = False,
                  backend_args: Optional[dict] = None) -> None:
 
-        random.seed(self.seed)
+        random.seed(seed)
         self.ignore_index = ignore_index
         self.reduce_zero_label = reduce_zero_label
         self.backend_args = backend_args.copy() if backend_args else None

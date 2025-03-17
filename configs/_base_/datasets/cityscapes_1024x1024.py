@@ -1,5 +1,5 @@
 cityscapes_type = "CityscapesDataset"
-cityscapes_root = "data/cityscapes/"
+cityscapes_root = "/home/johnl/data/cityscapes/"    #* Change this to your own path
 cityscapes_crop_size = (1024, 1024)
 cityscapes_train_pipeline = [
     dict(type="LoadImageFromFile"),
@@ -36,3 +36,24 @@ val_cityscapes = dict(
     ),
     pipeline=cityscapes_test_pipeline,
 )
+
+train_dataloader = dict(
+    batch_size=2,
+    num_workers=4, 
+    persistent_workers=True,
+    pin_memory=True,
+    sampler=dict(type="InfiniteSampler", shuffle=True),
+    dataset=train_cityscapes
+)
+val_dataloader = dict(
+    batch_size=1,
+    num_workers=4,
+    persistent_workers=True,
+    sampler=dict(type="DefaultSampler", shuffle=False),
+    dataset=val_cityscapes,
+)
+test_dataloader = val_dataloader
+
+val_evaluator = dict(type='IoUMetric', 
+                     iou_metrics=['mIoU'])
+test_evaluator = val_evaluator

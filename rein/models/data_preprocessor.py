@@ -107,18 +107,20 @@ class SegDataPreProcessorWithCOCO(BaseDataPreprocessor):
         """
         data = self.cast_data(data)  # type: ignore
         inputs = data['inputs']
-        coco_inputs = data['coco_inputs']
+        coco_inputs = data.get('coco_inputs', None)
         data_samples = data.get('data_samples', None)
         # TODO: whether normalize should be after stack_batch
         if self.channel_conversion and inputs[0].size(0) == 3:
             inputs = [_input[[2, 1, 0], ...] for _input in inputs]
-            coco_inputs = [_input[[2, 1, 0], ...] for _input in coco_inputs]
+            if coco_inputs is not None:
+                coco_inputs = [_input[[2, 1, 0], ...] for _input in coco_inputs]
 
         inputs = [_input.float() for _input in inputs]
-        coco_inputs = [_input.float() for _input in coco_inputs]
+        coco_inputs = [_input.float() for _input in coco_inputs] if coco_inputs is not None else None
         if self._enable_normalize:
             inputs = [(_input - self.mean) / self.std for _input in inputs]
-            coco_inputs = [(_input - self.mean) / self.std for _input in coco_inputs]
+            if coco_inputs is not None:
+                coco_inputs = [(_input - self.mean) / self.std for _input in coco_inputs]
 
         if training:
             assert data_samples is not None, ('During training, ',
@@ -130,19 +132,35 @@ class SegDataPreProcessorWithCOCO(BaseDataPreprocessor):
                 size_divisor=self.size_divisor,
                 pad_val=self.pad_val,
                 seg_pad_val=self.seg_pad_val)
-            coco_inputs, _ = stack_batch(
-                inputs=coco_inputs,
-                data_samples=None,
-                size=self.size,
-                size_divisor=self.size_divisor,
-                pad_val=self.pad_val,
-                seg_pad_val=self.seg_pad_val)
 
             if self.batch_augments is not None:
                 inputs, data_samples = self.batch_augments(
                     inputs, data_samples)
+            
+            if coco_inputs is not None:
+                coco_inputs, _ = stack_batch(
+                    inputs=coco_inputs,
+                    data_samples=None,
+                    size=self.size,
+                    size_divisor=self.size_divisor,
+                    pad_val=self.pad_val,
+                    seg_pad_val=self.seg_pad_val)
+                inputs = torch.cat([inputs, coco_inputs], dim=0)
         else:
-            raise NotImplementedError('Only support training now.')
+            img_size = inputs[0].shape[1:]
+            assert all(input_.shape[1:] == img_size for input_ in inputs),  \
+                'The image size in a batch should be the same.'
+            # pad images when testing
+            if self.test_cfg:
+                inputs, padded_samples = stack_batch(
+                    inputs=inputs,
+                    size=self.test_cfg.get('size', None),
+                    size_divisor=self.test_cfg.get('size_divisor', None),
+                    pad_val=self.pad_val,
+                    seg_pad_val=self.seg_pad_val)
+                for data_sample, pad_info in zip(data_samples, padded_samples):
+                    data_sample.set_metainfo({**pad_info})
+            else:
+                inputs = torch.stack(inputs, dim=0)
 
-        inputs = torch.cat([inputs, coco_inputs], dim=0)
         return dict(inputs=inputs, data_samples=data_samples)

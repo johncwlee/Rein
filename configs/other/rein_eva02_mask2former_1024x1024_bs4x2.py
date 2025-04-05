@@ -8,7 +8,7 @@ crop_size = (1024, 1024)
 model = dict(
     backbone=dict(
         img_size=1024,
-        pretrained="checkpoints/eva02_L_pt_m38m_p14to16_512x512.pt",
+        pretrained="checkpoints/eva02_L_pt_m38m_p14to16.pt",
     ),
     data_preprocessor=dict(size=crop_size),
     test_cfg=dict(

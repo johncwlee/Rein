@@ -9,8 +9,6 @@ model = dict(
     backbone=dict(
         img_size=1024,
         pretrained="checkpoints/eva02_L_pt_m38m_p14to16.pt",
-        patch_size=14,
-        reins_config=dict(patch_size=14)
     ),
     data_preprocessor=dict(size=crop_size),
     test_cfg=dict(
@@ -32,7 +30,7 @@ cityscapes_train_pipeline = [
     dict(type="PhotoMetricDistortion"),
     dict(type="PackSegInputs"),
 ]
-train_dataloader = dict(batch_size=1, dataset=dict(pipeline=cityscapes_train_pipeline))
+train_dataloader = dict(batch_size=2, dataset=dict(pipeline=cityscapes_train_pipeline))
 val_dataloader = dict(batch_size=1)
 
 # AdamW optimizer, no weight decay for position embedding & layer norm

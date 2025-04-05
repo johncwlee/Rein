@@ -12,7 +12,7 @@ def interpolate_pos_embed(checkpoint_model, new_size=16):
         # height (== width) for the checkpoint position embedding
         orig_size = int((pos_embed_checkpoint.shape[-2] - num_extra_tokens) ** 0.5)
         # height (== width) for the new position embedding
-        new_size = int(num_patches**0.5)
+        # new_size = int(num_patches**0.5)
         # class_token and dist_token are kept unchanged
         if orig_size != new_size:
             print(
@@ -44,7 +44,7 @@ def interpolate_pos_embed(checkpoint_model, new_size=16):
             (positional_embedding_checkpoint.shape[-2] - num_extra_tokens) ** 0.5
         )
         # height (== width) for the new position embedding
-        new_size = int(num_patches**0.5)
+        # new_size = int(num_patches**0.5)
         # class_token and dist_token are kept unchanged
         if orig_size != new_size:
             print(
@@ -99,7 +99,7 @@ if __name__ == "__main__":
     checkpoint["patch_embed.proj.weight"] = patch_embed
 
     # interpolate pos_embed too
-    interpolate_pos_embed(checkpoint, new_size=32)
+    interpolate_pos_embed(checkpoint, new_size=16)
 
     print("======== new state_dict ========")
     for k, v in list(checkpoint.items()):

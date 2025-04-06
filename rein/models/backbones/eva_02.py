@@ -19,16 +19,14 @@ import torch.utils.checkpoint as checkpoint
 
 from timm.models.layers import drop_path, to_2tuple, trunc_normal_
 
-from .beit import load_checkpoint
 from mmengine.logging import MMLogger
 from mmseg.models.builder import BACKBONES
 from mmcv.cnn import build_norm_layer
+from mmengine.runner.checkpoint import _load_checkpoint, load_state_dict
 import xformers.ops as xops
-# from apex.normalization import FusedLayerNorm
-# from apex.normalization import FusedLayerNorm
 
 
-from math import pi
+from math import pi, sqrt
 from einops import rearrange, repeat
 
 
@@ -142,21 +140,32 @@ class VisionRotaryEmbeddingFast(nn.Module):
         else:
             raise ValueError(f"unknown modality {freqs_for}")
 
-        if ft_seq_len is None:
-            ft_seq_len = pt_seq_len
-        t = torch.arange(ft_seq_len) / ft_seq_len * pt_seq_len
+        self.freqs = freqs
+        self.pt_seq_len = pt_seq_len
 
-        freqs = torch.einsum("..., f -> ... f", t, freqs)
-        freqs = repeat(freqs, "... n -> ... (n r)", r=2)
-        freqs = broadcat((freqs[:, None, :], freqs[None, :, :]), dim=-1)
-
+    def _get_freqs(self):
+        assert hasattr(self, "img_size"), "img_size not set; needs to be set dynamically before use"
+        h, w = self.img_size    #* image size after patch embed
+        t_h = torch.arange(h) / h * self.pt_seq_len
+        t_w = torch.arange(w) / w * self.pt_seq_len
+        
+        freqs_h = torch.einsum("..., f -> ... f", t_h, self.freqs)
+        freqs_h = repeat(freqs_h, "... n -> ... (n r)", r=2)
+        freqs_w = torch.einsum("..., f -> ... f", t_w, self.freqs)
+        freqs_w = repeat(freqs_w, "... n -> ... (n r)", r=2)
+        freqs = broadcat((freqs_h[:, None, :], freqs_w[None, :, :]), dim=-1)
         freqs_cos = freqs.cos().view(-1, freqs.shape[-1])
         freqs_sin = freqs.sin().view(-1, freqs.shape[-1])
+        
+        return freqs_cos, freqs_sin
 
-        self.register_buffer("freqs_cos", freqs_cos)
-        self.register_buffer("freqs_sin", freqs_sin)
+    def forward(self, t: torch.Tensor):
 
-    def forward(self, t):
+        if getattr(self, "freqs_cos", None) is None or t.shape[-2:] != self.freqs_cos.shape:
+            self.freqs_cos, self.freqs_sin = self._get_freqs()
+            self.freqs_cos = self.freqs_cos.to(t.device)
+            self.freqs_sin = self.freqs_sin.to(t.device)
+
         return t * self.freqs_cos + rotate_half(t) * self.freqs_sin
 
 
@@ -652,6 +661,7 @@ class EVA2(nn.Module):
         self.num_features = (
             self.embed_dim
         ) = embed_dim  # num_features for consistency with other models
+        self.patch_size = patch_size
 
         if hybrid_backbone is not None:
             self.patch_embed = HybridEmbed(
@@ -734,36 +744,6 @@ class EVA2(nn.Module):
             trunc_normal_(self.pos_embed, std=0.02)
         trunc_normal_(self.cls_token, std=0.02)
 
-        # if patch_size == 16:
-        #     self.fpn1 = nn.Sequential(
-        #         nn.ConvTranspose2d(embed_dim, embed_dim, kernel_size=2, stride=2),
-        #         nn.SyncBatchNorm(embed_dim),
-        #         nn.GELU(),
-        #         nn.ConvTranspose2d(embed_dim, embed_dim, kernel_size=2, stride=2),
-        #     )
-
-        #     self.fpn2 = nn.Sequential(
-        #         nn.ConvTranspose2d(embed_dim, embed_dim, kernel_size=2, stride=2),
-        #     )
-
-        #     self.fpn3 = nn.Identity()
-
-        #     self.fpn4 = nn.MaxPool2d(kernel_size=2, stride=2)
-        # elif patch_size == 8:
-        #     self.fpn1 = nn.Sequential(
-        #         nn.ConvTranspose2d(embed_dim, embed_dim, kernel_size=2, stride=2),
-        #     )
-
-        #     self.fpn2 = nn.Identity()
-
-        #     self.fpn3 = nn.Sequential(
-        #         nn.MaxPool2d(kernel_size=2, stride=2),
-        #     )
-
-        #     self.fpn4 = nn.Sequential(
-        #         nn.MaxPool2d(kernel_size=4, stride=4),
-        #     )
-        # self.init_weights(pretrained)
         self.pretrained = pretrained
 
     def _init_weights(self, m):
@@ -796,7 +776,8 @@ class EVA2(nn.Module):
         if isinstance(pretrained, str):
             self.apply(_init_weights)
             logger = MMLogger.get_current_instance()
-            load_checkpoint(self, pretrained, strict=False, logger=logger)
+            state_dict = _load_checkpoint(pretrained, logger=logger, map_location='cpu')['model']
+            load_state_dict(self, state_dict, strict=False, logger=logger)
         elif pretrained is None:
             self.apply(_init_weights)
         else:
@@ -809,6 +790,39 @@ class EVA2(nn.Module):
     def no_weight_decay(self):
         return {"pos_embed", "cls_token"}
 
+    def interpolate_pos_encoding(self, x, w, h):
+        previous_dtype = x.dtype
+        npatch = x.shape[1] - 1
+        N = self.pos_embed.shape[1] - 1
+        if npatch == N and w == h:
+            return self.pos_embed
+        pos_embed = self.pos_embed.float()
+        class_pos_embed = pos_embed[:, 0]
+        patch_pos_embed = pos_embed[:, 1:]
+        dim = x.shape[-1]
+        w0 = w // self.patch_size
+        h0 = h // self.patch_size
+        # we add a small number to avoid floating point error in the interpolation
+        # see discussion at https://github.com/facebookresearch/dino/issues/8
+        w0, h0 = w0 + 0.1, h0 + 0.1
+
+        patch_pos_embed = nn.functional.interpolate(
+            patch_pos_embed.reshape(
+                1, int(sqrt(N)), int(sqrt(N)), dim
+            ).permute(0, 3, 1, 2),
+            scale_factor=(w0 / sqrt(N), h0 / sqrt(N)),
+            mode="bicubic",
+        )
+
+        assert (
+            int(w0) == patch_pos_embed.shape[-2]
+            and int(h0) == patch_pos_embed.shape[-1]
+        )
+        patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)
+        return torch.cat((class_pos_embed.unsqueeze(0), patch_pos_embed), dim=1).to(
+            previous_dtype
+        )
+
     def forward_features(self, x):
         B, C, H, W = x.shape
         x, (Hp, Wp) = self.patch_embed(x)
@@ -819,7 +833,7 @@ class EVA2(nn.Module):
         )  # stole cls_tokens impl from Phil Wang, thanks
         x = torch.cat((cls_tokens, x), dim=1)
         if self.pos_embed is not None:
-            x = x + self.pos_embed
+            x = x + self.interpolate_pos_encoding(x, W, H)
         x = self.pos_drop(x)
 
         rel_pos_bias = self.rel_pos_bias() if self.rel_pos_bias is not None else None

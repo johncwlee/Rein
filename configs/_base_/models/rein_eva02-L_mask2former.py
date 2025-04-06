@@ -24,7 +24,6 @@ model = dict(
             link_token_to_query=True,
             lora_dim=16,
         ),
-        img_size=512,
         patch_size=16,
         in_chans=3,
         embed_dim=1024,

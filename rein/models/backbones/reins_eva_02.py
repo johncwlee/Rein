@@ -23,7 +23,7 @@ class ReinsEVA2(EVA2):
         )  # stole cls_tokens impl from Phil Wang, thanks
         x = torch.cat((cls_tokens, x), dim=1)
         if self.pos_embed is not None:
-            x = x + self.pos_embed
+            x = x + self.interpolate_pos_encoding(x, W, H)
         x = self.pos_drop(x)
 
         rel_pos_bias = self.rel_pos_bias() if self.rel_pos_bias is not None else None
@@ -32,6 +32,7 @@ class ReinsEVA2(EVA2):
             if self.use_checkpoint:
                 x = checkpoint.checkpoint(blk, x, rel_pos_bias)
             else:
+                blk.attn.rope.img_size = (Hp, Wp)
                 x = blk(x, rel_pos_bias)
             x = self.reins.forward(
                 x,

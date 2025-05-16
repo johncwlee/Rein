@@ -2,6 +2,7 @@ import copy
 import os.path as osp
 from typing import Any, Callable, Dict, List, Optional, Sequence, Union, Tuple
 import warnings
+import random
 
 import mmengine
 import mmcv
@@ -385,3 +386,80 @@ class PackSegInputsWithCOCO(BaseTransform):
         repr_str = self.__class__.__name__
         repr_str += f'(meta_keys={self.meta_keys})'
         return repr_str
+
+@TRANSFORMS.register_module()
+class MixADE(BaseTransform):
+    def __init__(self, 
+                 root: str, 
+                 ood_idx: int = 254):
+        self.root = root
+        self.img_dir = osp.join(self.root, "images", "training")
+        files = list(fileio.list_dir_or_file(
+            dir_path=self.img_dir,
+            list_dir=False,
+            suffix=".jpg",
+            recursive=True,
+            backend_args=None
+        ))
+        images = sorted([osp.join(self.img_dir, f) for f in files])
+        targets = [img.replace("images", "annotations").replace("jpg", "png") for img in images]
+        self.data = list(zip(images, targets))
+        self.ood_classes_per_item = 3
+    
+    @cache_randomness
+    def _random_select(self) -> Tuple[int, int]:
+        idx = np.random.randint(len(self.data))
+        data = self.data[idx]
+        return data
+
+    def _paste_anomaly(self, x, label, ood_patch, ood_lbl, ood_id):
+        p_h, p_w, _ = ood_patch.shape
+        h, w, _ = x.shape
+        pos_i = random.randint(0, h - p_h)
+        pos_j = random.randint(0, w - p_w)
+        for i in range(3):
+            x[pos_i: pos_i + p_h, pos_j: pos_j + p_w, i] = x[pos_i: pos_i + p_h, pos_j: pos_j + p_w, i] * (1 - ood_lbl) + ood_lbl * ood_patch[:, :, i]
+        label[pos_i: pos_i + p_h, pos_j: pos_j + p_w][ood_lbl == 1] = ood_id
+        return x, label
+
+    def transform(self, results: dict) -> dict:
+        data = self._random_select()
+        img_path, ood_tgt_path = data
+        results["ade_img_path"] = img_path
+        results["ade_ood_tgt_path"] = ood_tgt_path
+
+        img_bytes = fileio.get(img_path, backend_args=None)
+        ood_image = mmcv.imfrombytes(
+            img_bytes, flag='color', backend='cv2')
+        
+        img_bytes = fileio.get(ood_tgt_path, backend_args=None)
+        ood_lbl = mmcv.imfrombytes(
+            img_bytes, flag='unchanged', backend='pillow').squeeze().astype(np.uint8)
+        unique_lbls = np.unique(ood_lbl)
+        
+        ood_size = np.random.randint(96, 500)
+        factor = ood_size / max(ood_lbl.shape)
+        if factor < 1.:
+            ood_image = torch.nn.functional.interpolate(torch.from_numpy(ood_image).float().permute(2, 0, 1).unsqueeze(0), scale_factor=factor)[0].permute(1, 2, 0).long().numpy()
+            ood_lbl = torch.nn.functional.interpolate(torch.from_numpy(ood_lbl).unsqueeze(0).unsqueeze(0), scale_factor=factor, mode='nearest')[0, 0].numpy()
+        ood_image = np.uint8(ood_image)
+        ood_lbl = ood_lbl.astype("double")
+
+        image = results['img']
+        sem_seg_gt = results['gt_seg_map']
+        for c in np.random.choice(unique_lbls, self.ood_classes_per_item):
+            binary_ood_lbl = np.zeros_like(ood_lbl)
+            binary_ood_lbl[ood_lbl == c] = 1
+            binary_ood_lbl = np.uint8(binary_ood_lbl)
+            image, sem_seg_gt = self._paste_anomaly(image, sem_seg_gt, ood_image, binary_ood_lbl, 19)
+        
+        results['img'] = image
+        results['gt_seg_map'] = sem_seg_gt.astype(np.uint8)
+        # ood_seg_gt = np.zeros_like(sem_seg_gt)
+        # ood_seg_gt[sem_seg_gt == 19] = 1
+        # results['ood_seg_map'] = ood_seg_gt
+        
+        return results
+
+    def __repr__(self):
+        return self.__class__.__name__

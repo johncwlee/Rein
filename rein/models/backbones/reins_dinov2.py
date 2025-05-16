@@ -39,11 +39,11 @@ class ReinsDinoVisionTransformer(DinoVisionTransformer):
         set_requires_grad(self, ["reins"])
         set_train(self, ["reins"])
 
-    def state_dict(self, destination, prefix, keep_vars):
-        state = super().state_dict(destination, prefix, keep_vars)
-        keys = [k for k in state.keys() if "rein" not in k]
-        for key in keys:
-            state.pop(key)
-            if key in destination:
-                destination.pop(key)
-        return state
+    # def state_dict(self, destination, prefix, keep_vars):
+    #     state = super().state_dict(destination, prefix, keep_vars)
+    #     keys = [k for k in state.keys() if "rein" not in k]
+    #     for key in keys:
+    #         state.pop(key)
+    #         if key in destination:
+    #             destination.pop(key)
+    #     return state

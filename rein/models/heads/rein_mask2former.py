@@ -22,20 +22,20 @@ class ReinMask2FormerHead(Mask2FormerHead):
             del self.query_feat
             self.querys2feat = nn.Linear(feat_channels, feat_channels)
 
-    def init_weights(self):
-        super().init_weights()
-        state_dict = torch.load("checkpoints/dinov2_1024x1024_p16_rein_city+vistas_combined.pth")
-        state_dict = {k.replace("decode_head.", ""): v for k, v in state_dict.items() \
-                        if k.startswith("decode_head.")}
-        state_dict['cls_embed.bias'] = \
-                torch.cat((state_dict['cls_embed.bias'][: -1], 
-                        torch.tensor([0.0]).to(state_dict['cls_embed.bias'].device), 
-                        state_dict['cls_embed.bias'][-1:]))
-        state_dict['cls_embed.weight'] = \
-                torch.cat((state_dict['cls_embed.weight'][: -1],
-                        torch.zeros(1, 256).to(state_dict['cls_embed.weight'].device), 
-                        state_dict['cls_embed.weight'][-1:]), dim=0)
-        self.load_state_dict(state_dict, strict=True)
+    # def init_weights(self):
+    #     super().init_weights()
+    #     state_dict = torch.load("checkpoints/dinov2_1024x1024_p16_rein_city+vistas_combined.pth")
+    #     state_dict = {k.replace("decode_head.", ""): v for k, v in state_dict.items() \
+    #                     if k.startswith("decode_head.")}
+    #     state_dict['cls_embed.bias'] = \
+    #             torch.cat((state_dict['cls_embed.bias'][: -1], 
+    #                     torch.tensor([0.0]).to(state_dict['cls_embed.bias'].device), 
+    #                     state_dict['cls_embed.bias'][-1:]))
+    #     state_dict['cls_embed.weight'] = \
+    #             torch.cat((state_dict['cls_embed.weight'][: -1],
+    #                     torch.zeros(1, 256).to(state_dict['cls_embed.weight'].device), 
+    #                     state_dict['cls_embed.weight'][-1:]), dim=0)
+    #     self.load_state_dict(state_dict, strict=True)
 
     def forward(
         self, x: Tuple[List[Tensor], List[Tensor]], batch_data_samples: SampleList
